@@ -1,0 +1,105 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Include amd64 on all platforms.
+        goos: [windows, freebsd, linux, darwin]
+        goarch: [amd64, 386]
+        exclude:
+          # Exclude i386 on darwin
+          - goarch: 386
+            goos: darwin
+        include:
+          # BEIGIN MacOS ARM64
+          - goos: darwin
+            goarch: arm64
+          # END MacOS ARM64
+          # BEGIN Linux ARM 5 6 7 ARM64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+          - goos: linux
+            goarch: arm
+            goarm: 6
+          - goos: linux
+            goarch: arm
+            goarm: 5
+          - goos: linux
+            goarch: arm64
+          # END Linux ARM 5 6 7 ARM64
+          # Windows ARM
+          - goos: windows
+            goarch: arm64
+          # BEGIN Other architectures
+          # BEGIN MIPS
+          - goos: linux
+            goarch: mips64
+          - goos: linux
+            goarch: mips64le
+          - goos: linux
+            goarch: mipsle
+          - goos: linux
+            goarch: mips
+          # END MIPS
+          # END Other architectures
+
+    runs-on: ubuntu-latest
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOARM: ${{ matrix.goarm }}
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Show workflow information 
+        run: |
+          export _NAME="$GOOS-$GOARCH$GOARM"
+          echo "GOOS: $GOOS, GOARCH: $GOARCH, GOARM: $GOARM, RELEASE_NAME: $_NAME"
+          echo "ASSET_NAME=$_NAME" >> $GITHUB_ENV
+          export _VERSION=`git log --pretty=format:"%s" | grep -E '^v[0-9.]+' |head -1`
+          echo "VERSION=$_VERSION" >> $GITHUB_ENV
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Get project dependencies
+        run: go mod download
+      
+      - name: Build
+        run: |
+          make
+
+      - name: Upload files to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudflareST-${{ env.ASSET_NAME }}
+          path: |
+            CloudflareST*
+
+      - name: Create ZIP archive
+        shell: bash
+        run: |
+          touch -mt $(date +%Y01010000) CloudflareST*
+          zip -9vr ./CloudflareST-${{ env.ASSET_NAME }}.zip ./CloudflareST*
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./CloudflareST-${{ env.ASSET_NAME }}.zip
+          tag: ${{ env.VERSION }}
